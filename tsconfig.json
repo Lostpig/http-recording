@@ -1,0 +1,13 @@
+{
+    "compilerOptions": {
+        "sourceMap":  true,
+        "alwaysStrict": true,
+        "noImplicitAny": true,
+        "target": "es6",
+        "module": "commonjs",
+        "outDir": "./build"
+    },
+    "exclude": [
+        "node_modules"
+    ]
+}

@@ -1,0 +1,26 @@
+{
+  "name": "http-recording",
+  "version": "0.1.0",
+  "description": "a http proxy server ,and save http request and response record",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lostpigz/http-recording.git"
+  },
+  "scripts": {},
+  "main": "src/index.ts",
+  "types": "typings/typings.d.ts",
+  "dependencies": {
+    "@reactivex/rxjs": "^5.0.0",
+    "http-proxy": "^1.16.2"
+  },
+  "devDependencies": {
+    "@types/node": "^7.0.10",
+    "del": "^2.2.2",
+    "gulp": "^3.9.0",
+    "gulp-sourcemaps": "^2.4.1",
+    "gulp-typescript": "^3.1.6",
+    "typescript": "^2.2.1"
+  },
+  "author": "Lostpigz",
+  "license": "MIT"
+}

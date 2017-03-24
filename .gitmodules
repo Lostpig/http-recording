@@ -1,0 +1,3 @@
+[submodule "library/proxy"]
+	path = library/proxy
+	url = git://github.com/Lostpig/proxy.git
