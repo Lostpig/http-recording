@@ -12,8 +12,8 @@ import {
     IResponsePack,
     IRecoredSource,
     IProxyServer, 
-    IRequestFilter,
     IRecordStore,
+    IRecordSubscriber,
     IProxyOption,
     IFilterOption,
     IConverterOption,
@@ -39,8 +39,8 @@ let uncompress = async (data: Buffer, encoding: string): Promise<Buffer> => {
         }
     })
 }
-let getData = async (proxyReq: http.ClientRequest, req: http.IncomingMessage): Promise<[Buffer]> => {
-    return new Promise<[Buffer]>((resolve, rejuct) => {
+let getData = async (proxyReq: http.ClientRequest, req: http.IncomingMessage) => {
+    return new Promise<{proxyRes: http.IncomingMessage, reqBody: Buffer, resBody: Buffer}>((resolve, rejuct) => {
         let reqBuffer = new Buffer(0),
             resBuffer = new Buffer(0)
         req.on('data', (chunk: Buffer) => {
@@ -54,7 +54,7 @@ let getData = async (proxyReq: http.ClientRequest, req: http.IncomingMessage): P
                 resBuffer = Buffer.concat([resBuffer, chunk]);
             }).on('end', async () => {
                 resBuffer = await uncompress(resBuffer, proxyRes.headers['content-encoding'])
-                resolve([reqBuffer, resBuffer])
+                resolve({proxyRes, reqBody: reqBuffer, resBody: resBuffer })
             })
         })
     })
@@ -70,48 +70,22 @@ let buildNewPack = (oldPack?: any): any => {
 }
 
 class ProxyServer implements IProxyServer {
-    get level(): number  { return 0; }
+    get level(): number  { return 0 }
     private server: setup.ProxyServer
     constructor (options?: IProxyOption) {
-        this.subscriber = new Set()
-        this.requestSubscriber = new Set()
+        this.subscribers = new Set()
 
         this.server = setup(null, {
             target: options && options.target || null
         })
-        this.server.on('proxyReq', (proxyReq, req, res) => {
-            let reqFilterSubscribers = new Array<Function>(0)
-            if (this.requestSubscriber.size > 0) {
-                this.requestSubscriber.forEach((fn) => {
-                    let doNext = fn({
-                        req: req
-                    })
-                    if (doNext !== false) {
-                        reqFilterSubscribers.push(doNext)
-                    }
-                })
-            }
-            if (reqFilterSubscribers.length > 0 || this.subscriber.size > 0) {
-                getData(proxyReq, req).then((buffers) => {
-                    let timestamp = Date.now(),
-                        path = 0,
-                        reqBody = buffers[0],
-                        resBody = buffers[1]
-
-                    this.subscriber.forEach(fn => fn({ req, reqBody, resBody }))
-                    while (reqFilterSubscribers.length > 0) {
-                        reqFilterSubscribers.pop()({ timestamp, path, reqBody, resBody })
-                    }
-                })
-            }
+        this.server.on('proxyReq', async (proxyReq, req, res) => {
+            let { proxyRes, reqBody, resBody } = await getData(proxyReq, req)
+            this.subscribers.forEach(subscriber => subscriber.next({ req, proxyRes, reqBody, resBody }))
         })
     }
     listen (port: number, host?: string): this {
         this.server.listen(port, host)
         return this
-    }
-    requestFilter (filter: (pack: IRequestPack) => boolean): IRequestFilter {
-        return new RequestFilter(this, { filter: filter })
     }
     filter (filter: (pack: IResponsePack) => boolean): Filter {
         return new Filter(this, { filter })
@@ -119,45 +93,28 @@ class ProxyServer implements IProxyServer {
     converter (convert: (pack: IResponsePack) => any): Converter {
         return new Converter(this, { convert })
     }
-    toStore (options?: IStoreOptions): RecordStore {
-        return new RecordStore(this, options)
-    }
 
-    private subscriber: Set<(pack: IResponsePack) => void>
-    private requestSubscriber: Set<(pack: IRequestPack) => ((pack: IResponsePack) => void) | false>
-    subscribe (fn: (pack: IResponsePack) => void): boolean {
-        let isAdded = this.subscriber.has(fn)
-        if (!isAdded) {
-            this.subscriber.add(fn)
+    private subscribers: Set<RecordSubscriber>
+    subscribe (fn: (pack: IResponsePack) => void): RecordSubscriber {
+        let subscriber: RecordSubscriber
+        let next = (pack: IResponsePack) => {
+            fn(pack)
         }
-        return !isAdded
-    }
-    unsubscribe (fn?: (pack: IResponsePack) => void): boolean {
-        let isDelete: boolean
-        if (!fn) {
-            isDelete = this.subscriber.size > 0
-            this.subscriber.clear()
-        } else {
-            isDelete = this.subscriber.delete(fn)
-        } 
-        return isDelete
-    }
-    subscribeRequestFilter (fn: (pack: IRequestPack) => ((pack: IResponsePack) => void) | false): boolean {
-        let isAdded = this.requestSubscriber.has(fn)
-        if (!isAdded) {
-            this.requestSubscriber.add(fn)
+        let unsubscribe = () => {
+            this.subscribers.delete(subscriber)
         }
-        return !isAdded
+
+        subscriber = new RecordSubscriber(next, unsubscribe)
+        this.subscribers.add(subscriber)
+        return subscriber
     }
-    unsubscribeRequestFilter (fn?: (pack: IRequestPack) => ((pack: IResponsePack) => void) | false): boolean {
-        let isDelete: boolean
-        if (!fn) {
-            isDelete = this.requestSubscriber.size > 0
-            this.requestSubscriber.clear()
-        } else {
-            isDelete = this.requestSubscriber.delete(fn)
-        } 
-        return isDelete
+    subscribeToStore (options?: IStoreOptions): RecordStore {
+        let closure = (fn: (_pack: any) => void) => {
+            return this.subscribe((pack) => {
+                fn(pack)
+            })
+        }
+        return new RecordStore(closure, options)
     }
 }
 
@@ -169,154 +126,65 @@ abstract class RecordObservable implements IRecoredSource {
     converter (convert: (pack: any) => any): Converter {
         return new Converter(this, { convert })
     }
-    toStore (options?: IStoreOptions): IRecordStore {
-        return new RecordStore(this, options)
+    subscribeToStore (options?: IStoreOptions): IRecordStore {
+        let closure = (fn: (_pack: any) => void) => {
+            return this.subscribe((pack) => {
+                fn(pack)
+            })
+        }
+        return new RecordStore(closure, options)
     }
 
     protected source: IRecoredSource
-    protected excute: (pack: any) => void
-    protected subscriber: Set<(pack:any) => void>
+    protected closure: (fn: Function) => ((pack: any) => void)
     constructor (source: IRecoredSource) {
         this.source = source
-        this.subscriber = new Set();
     }
-
-    subscribe (fn: (pack: any) => void): boolean {
-        let isAdded = this.subscriber.has(fn)
-        if (!isAdded) {
-            this.subscriber.add(fn)
-        }
-        this.source.subscribe(this.excute)
-
-        return !isAdded
-    }
-    unsubscribe (fn?: (pack: any) => void): boolean {
-        let isDelete: boolean
-        if (!fn) {
-            isDelete = this.subscriber.size > 0
-            this.subscriber.clear()
-            this.source.unsubscribe(this.excute)
-        } else {
-            isDelete = this.subscriber.delete(fn)
-            if (this.subscriber.size === 0) {
-                this.source.unsubscribe(this.excute)
-            }
-        }
-
-        return isDelete
-    }
-}
-
-class RequestFilter extends RecordObservable implements IRequestFilter {
-    protected source: ProxyServer
-    protected excute: (pack: IRequestPack) => ((pack: IResponsePack) => void) | false
-    constructor (source: ProxyServer, options: IFilterOption) {
-        super(source)
-        this.subscriber = new Set();
-        this.excute = (reqPack: IRequestPack) => {
-            return options.filter(reqPack) ? 
-                (pack: IResponsePack) => { 
-                    this.subscriber.forEach(fn => fn(pack))
-                } : false
-        }
-    }
-
-    subscribe (fn: (pack: IRequestPack) => void): boolean {
-        let isAdded = this.subscriber.has(fn)
-        if (!isAdded) {
-            this.subscriber.add(fn)
-        }
-
-        this.source.subscribeRequestFilter(this.excute)
-        return !isAdded
-    }
-    unsubscribe (fn?: (pack: IRequestPack) => void): boolean {
-        let isDelete: boolean
-        if (!fn) {
-            isDelete = this.subscriber.size > 0
-            this.subscriber.clear()
-            this.source.unsubscribeRequestFilter(this.excute)
-        } else {
-            isDelete = this.subscriber.delete(fn)
-            if (this.subscriber.size === 0) {
-                this.source.unsubscribeRequestFilter(this.excute)
-            }
-        }
-
-        return isDelete
+    subscribe (fn: (pack: any) => void): IRecordSubscriber {
+        return this.source.subscribe(this.closure(fn))
     }
 }
 
 class Filter extends RecordObservable {
-    protected excute: (pack: any) => void
     constructor (source: IRecoredSource, options: IFilterOption) {
         super(source)
-        this.excute = (pack) => { 
-            if (options.filter(pack)) {
-                this.subscriber.forEach((fn) => {
+        this.closure = (fn) => { 
+            return (pack) => {
+                if (options.filter(pack)) {
                     fn(buildNewPack(pack))
-                })
+                }
             }
         }
     }
 }
-
 class Converter extends RecordObservable {
-    protected excute: (pack: any) => void
     constructor (source: IRecoredSource, options: IConverterOption) {
         super(source)
-        this.excute = (pack) => { 
-            this.subscriber.forEach((fn) => {
+        this.closure = (fn) => { 
+            return (pack) => {
                 fn(options.convert(buildNewPack(pack)))
-            })
+            }
         }
     }
 }
 
 class RecordStore implements IRecordStore {
-    private source: IRecoredSource
+    private subscriber: IRecordSubscriber
     private maxCount: number
-    private subscriber: Set<(pack:any) => void>
     private records: any[]
-    private excute: (pack: any) => void
-    constructor(source: IRecoredSource, options?: IStoreOptions) {
+
+    constructor(closure: (fn: (_pack: any) => void) => IRecordSubscriber, options?: IStoreOptions) {
         options = options || { maxCount: 10 }
 
-        this.source = source
-        this.subscriber = new Set();
+        this.subscriber = closure((pack) => this.pushRecord(pack))
         this.maxCount = options.maxCount
         this.records = []
-
-        this.excute = (pack) => {
-            this.pushRecord(pack)
-            this.subscriber.forEach(fn => fn(pack))
-        }
-        this.source.subscribe(this.excute)
     }
     private pushRecord (pack: any): void {
         if (this.records.length >= this.maxCount) {
             this.records.shift()
         }
         this.records.push(pack)
-    }
-    subscribe (fn: (pack: any) => void): boolean {
-        let isAdded = this.subscriber.has(fn)
-        if (!isAdded) {
-            this.subscriber.add(fn)
-        }
-
-        return !isAdded
-    }
-    unsubscribe (fn?: (pack: any) => void): boolean {
-        let isDelete: boolean
-        if (!fn) {
-            isDelete = this.subscriber.size > 0
-            this.subscriber.clear()
-        } else {
-            isDelete = this.subscriber.delete(fn)
-        }
-
-        return isDelete
     }
 
     get current (): any {
@@ -333,9 +201,29 @@ class RecordStore implements IRecordStore {
     }
 
     destroy (): void {
-        this.unsubscribe()
-        this.source.unsubscribe(this.excute)
+        this.subscriber.unsubscribe()
         this.records.length = 0
+    }
+}
+
+class RecordSubscriber implements IRecordSubscriber {
+    private source: IRecoredSource
+    private _close: boolean = false
+    private _next: Function
+    private _unsubscribe: () => void
+    constructor (next: Function, unsubscribe: () => void) {
+        this._next = next
+        this._unsubscribe = unsubscribe
+    }
+    next (...args: any[]): void {
+        this._next(...args)
+    }
+    get close (): boolean {
+        return this._close
+    }
+    unsubscribe (): void {
+        this._unsubscribe()
+        this._close = true
     }
 }
 

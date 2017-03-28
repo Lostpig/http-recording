@@ -12,10 +12,24 @@ import {
     IResponsePack,
     IRecoredSource,
     IProxyServer, 
-    IRequestFilter,
     IRecordStore,
+    IRecordSubscriber,
     IProxyOption,
     IFilterOption,
     IConverterOption,
     IStoreOptions
  } from '../src/interface'
+
+declare namespace Recorder {
+    export class RecordServer implements IProxyServer {
+        readonly level: number
+        constructor (options?: IProxyOption)
+        listen (port: number, host?: string): this
+        filter (filter: (pack: IResponsePack) => boolean): IRecoredSource
+        converter (converter: (pack: IResponsePack) => any): IRecoredSource
+        subscribe (fn: (pack: IResponsePack) => void): IRecordSubscriber
+        subscribeToStore (options?: IStoreOptions): IRecordStore
+    }
+}
+
+export = Recorder

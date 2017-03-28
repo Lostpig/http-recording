@@ -12,9 +12,15 @@ gulp.task('default', function () {
         .pipe(sourceMaps.init())
         .pipe(tsProject()).js
         .pipe(sourceMaps.write('.', {includeContent: false, sourceRoot: '.'}))
-        .pipe(gulp.dest('build'))
+        .pipe(gulp.dest('dist'))
+})
+
+gulp.task('build', function () {
+    return gulp.src('src/**/*.ts', { base: './src' })
+        .pipe(tsProject()).js
+        .pipe(gulp.dest('dist'))
 })
 
 gulp.task('clean', function (done) {
-	del('build/*', done)
+	del('dist/*', done)
 });
