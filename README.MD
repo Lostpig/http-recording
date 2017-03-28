@@ -9,16 +9,17 @@ example
 const RecordServer = require('http-recording');
 
 let server = new RecordServer().listen(22009)
-let kcsapiStore = server
+let kcsapiObserval = server
     .requestFilter((pack) => {
         return url.parse(pack.req.url).pathname.startsWith('/kcsapi')
     })
     .converter((pack) => {
-        let json: string = pack.resBody.toString().slice(7)
+        let json = pack.resBody.toString().slice(7)
         return JSON.parse(json)
     })
-    .toStore()
-kcsapiStore.subscribe((data) => {
-    console.log(data.api_result)
+
+let kcsapiStore = kcsapiObserval.subscribeToStore()
+let kcsapiSubscriber = kcsapiObserval.subscribe((json) => {
+    console.log(json)
 })
 ```
