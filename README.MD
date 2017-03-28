@@ -10,7 +10,7 @@ const RecordServer = require('http-recording');
 
 let server = new RecordServer().listen(22009)
 let kcsapiObserval = server
-    .requestFilter((pack) => {
+    .filter((pack) => {
         return url.parse(pack.req.url).pathname.startsWith('/kcsapi')
     })
     .converter((pack) => {
