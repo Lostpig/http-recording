@@ -2,38 +2,38 @@ import * as http from 'http'
 import * as url from 'url'
 import { Buffer } from 'buffer'
 
-export interface IRequestPack {
-    req: http.IncomingMessage
+export interface IPack {
+    [key: string]: any
 }
-export interface IResponsePack {
+export interface IResponsePack extends IPack {
     req: http.IncomingMessage,
     proxyRes: http.IncomingMessage,
     reqBody: Buffer
     resBody: Buffer
 }
 
-export interface IRecoredSource {
+export interface IRecoredSource<T> {
     readonly level: number
-    filter (filter: (pack: any) => boolean): IRecoredSource
-    converter (converter: (pack: any) => any): IRecoredSource
-    subscribeToStore (options?: IStoreOptions): IRecordStore
+    filter (filter: (pack: T) => boolean): IRecoredSource<T>
+    converter<convertT> (converter: (pack: T) => convertT): IRecoredSource<convertT>
+    subscribeToStore (size?: number): IRecordStore<T>
 
-    subscribe (fn: (pack: any) => void): IRecordSubscriber
+    subscribe (fn: (pack: T) => void): IRecordSubscriber<T>
 }
-export interface IProxyServer extends IRecoredSource {
-    filter (filter: (pack: IResponsePack) => boolean): IRecoredSource
-    converter (converter: (pack: IResponsePack) => any): IRecoredSource
+export interface IProxyServer extends IRecoredSource<IResponsePack> {
+    filter (filter: (pack: IResponsePack) => boolean): IRecoredSource<IResponsePack>
+    converter<convertT> (converter: (pack: IResponsePack) => convertT): IRecoredSource<convertT>
 
-    subscribe (fn: (pack: IResponsePack) => void): IRecordSubscriber
+    subscribe (fn: (pack: IResponsePack) => void): IRecordSubscriber<IResponsePack>
 }
-export interface IRecordStore  {
-    readonly current: any
+export interface IRecordStore<T>  {
+    readonly current: T
     readonly size: number
     clear (): void
-    select (filter?: (pack:any, index: number) => boolean): any[]
+    select (filter?: (pack:T, index: number) => boolean): T[]
     destroy (): void
 }
-export interface IRecordSubscriber {
+export interface IRecordSubscriber<T> {
     close: boolean
     next: Function
     unsubscribe(): void
@@ -41,16 +41,4 @@ export interface IRecordSubscriber {
 
 export interface IProxyOption {
     target: string | url.Url | null
-}
-
-export interface IFilterOption {
-    filter: (pack: any) => boolean
-}
-
-export interface IConverterOption {
-    convert: (pack: any) => any
-}
-
-export interface IStoreOptions {
-    maxCount: number
 }

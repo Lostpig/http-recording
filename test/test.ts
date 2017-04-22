@@ -15,7 +15,7 @@ let useitemStore = kcsapiObserval
         let json: string = pack.resBody.toString().slice(7)
         return JSON.parse(json)
     })
-    .subscribeToStore({ maxCount: 100 })
+    .subscribeToStore(100)
 
 let subscriber = kcsapiObserval.subscribe((jsondata) => {
     console.log(jsondata.api_result_msg)

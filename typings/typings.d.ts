@@ -8,16 +8,13 @@ import * as http from 'http'
 import { Buffer } from 'buffer'
 
 import { 
-    IRequestPack, 
+    IPack, 
     IResponsePack,
     IRecoredSource,
     IProxyServer, 
     IRecordStore,
     IRecordSubscriber,
-    IProxyOption,
-    IFilterOption,
-    IConverterOption,
-    IStoreOptions
+    IProxyOption
  } from '../src/interface'
 
 declare namespace Recorder {
@@ -25,10 +22,10 @@ declare namespace Recorder {
         readonly level: number
         constructor (options?: IProxyOption)
         listen (port: number, host?: string): this
-        filter (filter: (pack: IResponsePack) => boolean): IRecoredSource
-        converter (converter: (pack: IResponsePack) => any): IRecoredSource
-        subscribe (fn: (pack: IResponsePack) => void): IRecordSubscriber
-        subscribeToStore (options?: IStoreOptions): IRecordStore
+        filter (filter: (pack: IResponsePack) => boolean): IRecoredSource<IResponsePack>
+        converter<toT> (converter: (pack: IResponsePack) => toT): IRecoredSource<toT>
+        subscribe (fn: (pack: IResponsePack) => void): IRecordSubscriber<IResponsePack>
+        subscribeToStore (size?: number): IRecordStore<IResponsePack>
     }
 }
 

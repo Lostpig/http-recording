@@ -8,16 +8,13 @@ import { Buffer } from 'buffer'
 import * as setup from '../library/proxy'
 
 import { 
-    IRequestPack, 
+    IPack,
     IResponsePack,
     IRecoredSource,
     IProxyServer, 
     IRecordStore,
     IRecordSubscriber,
-    IProxyOption,
-    IFilterOption,
-    IConverterOption,
-    IStoreOptions
+    IProxyOption
  } from './interface'
 
 let uncompress = async (data: Buffer, encoding: string): Promise<Buffer> => {
@@ -59,8 +56,8 @@ let getData = async (proxyReq: http.ClientRequest, req: http.IncomingMessage) =>
         })
     })
 }
-let buildNewPack = (oldPack?: any): any => {
-    let newPack: any = {}
+let buildNewPack = <T extends IPack> (oldPack?: T): T => {
+    let newPack: T = {} as T
     if (oldPack) {
         Object.keys(oldPack).forEach(key => {
             newPack[key] = oldPack[key]
@@ -72,6 +69,7 @@ let buildNewPack = (oldPack?: any): any => {
 class ProxyServer implements IProxyServer {
     get level(): number  { return 0 }
     private server: setup.ProxyServer
+    private subscribers: Set<RecordSubscriber<IResponsePack>>
     constructor (options?: IProxyOption) {
         this.subscribers = new Set()
 
@@ -87,107 +85,102 @@ class ProxyServer implements IProxyServer {
         this.server.listen(port, host)
         return this
     }
-    filter (filter: (pack: IResponsePack) => boolean): Filter {
-        return new Filter(this, { filter })
+    filter (filter: (pack: IResponsePack) => boolean): Filter<IResponsePack> {
+        return new Filter<IResponsePack>(this, filter)
     }
-    converter (convert: (pack: IResponsePack) => any): Converter {
-        return new Converter(this, { convert })
+    converter<toT> (convert: (pack: IResponsePack) => toT): Converter<IResponsePack, toT> {
+        return new Converter(this, convert)
     }
 
-    private subscribers: Set<RecordSubscriber>
-    subscribe (fn: (pack: IResponsePack) => void): RecordSubscriber {
-        let subscriber: RecordSubscriber
-        let next = (pack: IResponsePack) => {
-            fn(pack)
-        }
-        let unsubscribe = () => {
+    
+    subscribe (fn: (pack: IResponsePack) => void): RecordSubscriber<IResponsePack> {
+        let unsubscribe = (subscriber: RecordSubscriber<IResponsePack>) => {
             this.subscribers.delete(subscriber)
         }
 
-        subscriber = new RecordSubscriber(next, unsubscribe)
+        let subscriber = new RecordSubscriber<IResponsePack>(fn, unsubscribe)
         this.subscribers.add(subscriber)
         return subscriber
     }
-    subscribeToStore (options?: IStoreOptions): RecordStore {
-        let closure = (fn: (_pack: any) => void) => {
+    subscribeToStore (size?: number): RecordStore<IResponsePack> {
+        let closure = (fn: (_pack: IResponsePack) => void) => {
             return this.subscribe((pack) => {
                 fn(pack)
             })
         }
-        return new RecordStore(closure, options)
+        return new RecordStore(closure, size)
     }
 }
 
-abstract class RecordObservable implements IRecoredSource {
+abstract class RecordObservable<T extends IPack> implements IRecoredSource<T> {
     get level(): number  { return this.source.level + 1; }
-    filter (filter: (pack: any) => boolean): Filter {
-        return new Filter(this, { filter })
+    filter (filter: (pack: T) => boolean): Filter<T> {
+        return new Filter<T>(this, filter)
     }
-    converter (convert: (pack: any) => any): Converter {
-        return new Converter(this, { convert })
+    converter<toT> (convert: (pack: T) => toT): Converter<T, toT> {
+        return new Converter(this, convert)
     }
-    subscribeToStore (options?: IStoreOptions): IRecordStore {
-        let closure = (fn: (_pack: any) => void) => {
+    subscribeToStore (size?: number): IRecordStore<T> {
+        let closure = (fn: (_pack: T) => void) => {
             return this.subscribe((pack) => {
                 fn(pack)
             })
         }
-        return new RecordStore(closure, options)
+        return new RecordStore(closure, size)
     }
 
-    protected source: IRecoredSource
-    protected closure: (fn: Function) => ((pack: any) => void)
-    constructor (source: IRecoredSource) {
+    protected source: IRecoredSource<IPack>
+    protected closure: (fn: Function) => ((pack: IPack) => void)
+    constructor (source: IRecoredSource<IPack>) {
         this.source = source
     }
-    subscribe (fn: (pack: any) => void): IRecordSubscriber {
+    subscribe (fn: (pack: T) => void): IRecordSubscriber<T> {
         return this.source.subscribe(this.closure(fn))
     }
 }
 
-class Filter extends RecordObservable {
-    constructor (source: IRecoredSource, options: IFilterOption) {
+class Filter<T extends IPack> extends RecordObservable<T> {
+    constructor (source: IRecoredSource<T>, filter: (pack: T) => boolean) {
         super(source)
-        this.closure = (fn) => { 
-            return (pack) => {
-                if (options.filter(pack)) {
+        this.closure = (fn: (pack: T) => void) => {
+            return (pack: T) => {
+                if (filter(pack)) {
                     fn(buildNewPack(pack))
                 }
             }
         }
     }
 }
-class Converter extends RecordObservable {
-    constructor (source: IRecoredSource, options: IConverterOption) {
+class Converter<fromT extends IPack, toT extends IPack> extends RecordObservable<toT> {
+    protected source: IRecoredSource<fromT>
+    constructor (source: IRecoredSource<fromT>, convert: (pack: fromT) => toT) {
         super(source)
         this.closure = (fn) => { 
-            return (pack) => {
-                fn(options.convert(buildNewPack(pack)))
+            return (pack: fromT) => {
+                fn(convert(buildNewPack(pack)))
             }
         }
     }
 }
 
-class RecordStore implements IRecordStore {
-    private subscriber: IRecordSubscriber
-    private maxCount: number
-    private records: any[]
+class RecordStore<T> implements IRecordStore<T> {
+    private subscriber: IRecordSubscriber<T>
+    private maxSize: number
+    private records: T[]
 
-    constructor(closure: (fn: (_pack: any) => void) => IRecordSubscriber, options?: IStoreOptions) {
-        options = options || { maxCount: 10 }
-
+    constructor(closure: (fn: (_pack: T) => void) => IRecordSubscriber<T>, size?: number) {
         this.subscriber = closure((pack) => this.pushRecord(pack))
-        this.maxCount = options.maxCount
+        this.maxSize = size || 10
         this.records = []
     }
-    private pushRecord (pack: any): void {
-        if (this.records.length >= this.maxCount) {
+    private pushRecord (pack: T): void {
+        if (this.records.length >= this.maxSize) {
             this.records.shift()
         }
         this.records.push(pack)
     }
 
-    get current (): any {
+    get current (): T {
         return this.records.length > 0 ? this.records[this.records.length - 1] : null
     }
     get size (): number {
@@ -196,7 +189,7 @@ class RecordStore implements IRecordStore {
     clear (): void {
         this.records.length = 0
     }
-    select (filter?: (pack:any, index: number) => boolean): any[] {
+    select (filter?: (pack:T, index: number) => boolean): T[] {
         return filter ? this.records.filter(filter) : this.records.map(e => e)
     }
 
@@ -206,17 +199,17 @@ class RecordStore implements IRecordStore {
     }
 }
 
-class RecordSubscriber implements IRecordSubscriber {
-    private source: IRecoredSource
+class RecordSubscriber<T> implements IRecordSubscriber<T> {
+    private source: IRecoredSource<T>
     private _close: boolean = false
     private _next: Function
     private _unsubscribe: () => void
-    constructor (next: Function, unsubscribe: () => void) {
+    constructor (next: Function, unsubscribe: (subscriber: IRecordSubscriber<T>) => void) {
         this._next = next
-        this._unsubscribe = unsubscribe
+        this._unsubscribe = () => { unsubscribe(this) }
     }
-    next (...args: any[]): void {
-        this._next(...args)
+    next (arg: T): void {
+        this._next(arg)
     }
     get close (): boolean {
         return this._close
