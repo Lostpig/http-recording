@@ -82,61 +82,57 @@ class ProxyServer {
         return this;
     }
     filter(filter) {
-        return new Filter(this, { filter });
+        return new Filter(this, filter);
     }
     converter(convert) {
-        return new Converter(this, { convert });
+        return new Converter(this, convert);
     }
     subscribe(fn) {
-        let subscriber;
-        let next = (pack) => {
-            fn(pack);
-        };
-        let unsubscribe = () => {
+        let unsubscribe = (subscriber) => {
             this.subscribers.delete(subscriber);
         };
-        subscriber = new RecordSubscriber(next, unsubscribe);
+        let subscriber = new RecordSubscriber(fn, unsubscribe);
         this.subscribers.add(subscriber);
         return subscriber;
     }
-    subscribeToStore(options) {
+    subscribeToStore(size) {
         let closure = (fn) => {
             return this.subscribe((pack) => {
                 fn(pack);
             });
         };
-        return new RecordStore(closure, options);
+        return new RecordStore(closure, size);
     }
 }
 class RecordObservable {
+    constructor(source) {
+        this.source = source;
+    }
     get level() { return this.source.level + 1; }
     filter(filter) {
-        return new Filter(this, { filter });
+        return new Filter(this, filter);
     }
     converter(convert) {
-        return new Converter(this, { convert });
+        return new Converter(this, convert);
     }
-    subscribeToStore(options) {
+    subscribeToStore(size) {
         let closure = (fn) => {
             return this.subscribe((pack) => {
                 fn(pack);
             });
         };
-        return new RecordStore(closure, options);
-    }
-    constructor(source) {
-        this.source = source;
+        return new RecordStore(closure, size);
     }
     subscribe(fn) {
         return this.source.subscribe(this.closure(fn));
     }
 }
 class Filter extends RecordObservable {
-    constructor(source, options) {
+    constructor(source, filter) {
         super(source);
         this.closure = (fn) => {
             return (pack) => {
-                if (options.filter(pack)) {
+                if (filter(pack)) {
                     fn(buildNewPack(pack));
                 }
             };
@@ -144,24 +140,23 @@ class Filter extends RecordObservable {
     }
 }
 class Converter extends RecordObservable {
-    constructor(source, options) {
+    constructor(source, convert) {
         super(source);
         this.closure = (fn) => {
             return (pack) => {
-                fn(options.convert(buildNewPack(pack)));
+                fn(convert(buildNewPack(pack)));
             };
         };
     }
 }
 class RecordStore {
-    constructor(closure, options) {
-        options = options || { maxCount: 10 };
+    constructor(closure, size) {
         this.subscriber = closure((pack) => this.pushRecord(pack));
-        this.maxCount = options.maxCount;
+        this.maxSize = size || 10;
         this.records = [];
     }
     pushRecord(pack) {
-        if (this.records.length >= this.maxCount) {
+        if (this.records.length >= this.maxSize) {
             this.records.shift();
         }
         this.records.push(pack);
@@ -187,10 +182,10 @@ class RecordSubscriber {
     constructor(next, unsubscribe) {
         this._close = false;
         this._next = next;
-        this._unsubscribe = unsubscribe;
+        this._unsubscribe = () => { unsubscribe(this); };
     }
-    next(...args) {
-        this._next(...args);
+    next(arg) {
+        this._next(arg);
     }
     get close() {
         return this._close;
@@ -201,5 +196,3 @@ class RecordSubscriber {
     }
 }
 exports.default = ProxyServer;
-
-//# sourceMappingURL=main.js.map

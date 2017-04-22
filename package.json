@@ -6,7 +6,9 @@
     "type": "git",
     "url": "git+https://github.com/lostpigz/http-recording.git"
   },
-  "scripts": {},
+  "scripts": {
+    "build": "gulp build"
+  },
   "main": "dist/main.js",
   "types": "typings/typings.d.ts",
   "dependencies": {
